@@ -17,7 +17,7 @@ use Tymon\JWTAuth\Factory;
 use Tymon\JWTAuth\Payload;
 use Tymon\JWTAuth\JWTGuard;
 use Illuminate\Http\Request;
-use Illuminate\Contracts\Auth\UserProvider;
+use Illuminate\Auth\EloquentUserProvider;
 use Tymon\JWTAuth\Test\Stubs\LaravelUserStub;
 
 class JWTGuardTest extends AbstractTestCase
@@ -42,15 +42,8 @@ class JWTGuardTest extends AbstractTestCase
         parent::setUp();
 
         $this->jwt = Mockery::mock(JWT::class);
-        $this->provider = Mockery::mock(UserProvider::class);
+        $this->provider = Mockery::mock(EloquentUserProvider::class);
         $this->guard = new JWTGuard($this->jwt, $this->provider, Request::create('/foo', 'GET'));
-    }
-
-    public function tearDown()
-    {
-        Mockery::close();
-
-        parent::tearDown();
     }
 
     /**
@@ -68,14 +61,20 @@ class JWTGuardTest extends AbstractTestCase
      */
     public function it_should_get_the_authenticated_user_if_a_valid_token_is_provided()
     {
+        $payload = Mockery::mock(Payload::class);
+        $payload->shouldReceive('offsetGet')->once()->with('sub')->andReturn(1);
+
         $this->jwt->shouldReceive('setRequest')->andReturn($this->jwt);
         $this->jwt->shouldReceive('getToken')->once()->andReturn('foo.bar.baz');
-        $this->jwt->shouldReceive('check')->once()->andReturn(true);
-        $this->jwt->shouldReceive('payload->get')
+        $this->jwt->shouldReceive('check')->once()->with(true)->andReturn($payload);
+        $this->jwt->shouldReceive('checkSubjectModel')
                   ->once()
-                  ->with('sub')
-                  ->andReturn(1);
+                  ->with('\Tymon\JWTAuth\Test\Stubs\LaravelUserStub')
+                  ->andReturn(true);
 
+        $this->provider->shouldReceive('getModel')
+                       ->once()
+                       ->andReturn('\Tymon\JWTAuth\Test\Stubs\LaravelUserStub');
         $this->provider->shouldReceive('retrieveById')
                        ->once()
                        ->with(1)
@@ -97,18 +96,24 @@ class JWTGuardTest extends AbstractTestCase
      */
     public function it_should_get_the_authenticated_user_if_a_valid_token_is_provided_and_not_throw_an_exception()
     {
+        $payload = Mockery::mock(Payload::class);
+        $payload->shouldReceive('offsetGet')->once()->with('sub')->andReturn(1);
+
         $this->jwt->shouldReceive('setRequest')->andReturn($this->jwt);
         $this->jwt->shouldReceive('getToken')->once()->andReturn('foo.bar.baz');
-        $this->jwt->shouldReceive('check')->once()->andReturn(true);
-        $this->jwt->shouldReceive('payload->get')
-            ->once()
-            ->with('sub')
-            ->andReturn(1);
+        $this->jwt->shouldReceive('check')->once()->with(true)->andReturn($payload);
+        $this->jwt->shouldReceive('checkSubjectModel')
+                  ->once()
+                  ->with('\Tymon\JWTAuth\Test\Stubs\LaravelUserStub')
+                  ->andReturn(true);
 
+        $this->provider->shouldReceive('getModel')
+                       ->once()
+                       ->andReturn('\Tymon\JWTAuth\Test\Stubs\LaravelUserStub');
         $this->provider->shouldReceive('retrieveById')
-            ->once()
-            ->with(1)
-            ->andReturn((object) ['id' => 1]);
+             ->once()
+             ->with(1)
+             ->andReturn((object) ['id' => 1]);
 
         $this->assertSame(1, $this->guard->userOrFail()->id);
 
@@ -123,6 +128,7 @@ class JWTGuardTest extends AbstractTestCase
      */
     public function it_should_return_null_if_an_invalid_token_is_provided()
     {
+        $this->jwt->shouldReceive('setRequest')->andReturn($this->jwt);
         $this->jwt->shouldReceive('getToken')->twice()->andReturn('invalid.token.here');
         $this->jwt->shouldReceive('check')->twice()->andReturn(false);
         $this->jwt->shouldReceive('getPayload->get')->never();
@@ -138,6 +144,7 @@ class JWTGuardTest extends AbstractTestCase
      */
     public function it_should_return_null_if_no_token_is_provided()
     {
+        $this->jwt->shouldReceive('setRequest')->andReturn($this->jwt);
         $this->jwt->shouldReceive('getToken')->andReturn(false);
         $this->jwt->shouldReceive('check')->never();
         $this->jwt->shouldReceive('getPayload->get')->never();
@@ -155,6 +162,7 @@ class JWTGuardTest extends AbstractTestCase
      */
     public function it_should_throw_an_exception_if_an_invalid_token_is_provided()
     {
+        $this->jwt->shouldReceive('setRequest')->andReturn($this->jwt);
         $this->jwt->shouldReceive('getToken')->twice()->andReturn('invalid.token.here');
         $this->jwt->shouldReceive('check')->twice()->andReturn(false);
         $this->jwt->shouldReceive('getPayload->get')->never();
@@ -172,6 +180,7 @@ class JWTGuardTest extends AbstractTestCase
      */
     public function it_should_throw_an_exception_if_no_token_is_provided()
     {
+        $this->jwt->shouldReceive('setRequest')->andReturn($this->jwt);
         $this->jwt->shouldReceive('getToken')->andReturn(false);
         $this->jwt->shouldReceive('check')->never();
         $this->jwt->shouldReceive('getPayload->get')->never();
@@ -205,8 +214,19 @@ class JWTGuardTest extends AbstractTestCase
                   ->with($user)
                   ->andReturn('foo.bar.baz');
 
-        $token = $this->guard->attempt($credentials);
+        $this->jwt->shouldReceive('setToken')
+                  ->once()
+                  ->with('foo.bar.baz')
+                  ->andReturnSelf();
 
+        $this->jwt->shouldReceive('claims')
+                  ->once()
+                  ->with(['foo' => 'bar'])
+                  ->andReturnSelf();
+
+        $token = $this->guard->claims(['foo' => 'bar'])->attempt($credentials);
+
+        $this->assertSame($this->guard->getLastAttempted(), $user);
         $this->assertSame($token, 'foo.bar.baz');
     }
 
@@ -445,6 +465,11 @@ class JWTGuardTest extends AbstractTestCase
                   ->with($user)
                   ->andReturn('foo.bar.baz');
 
+        $this->jwt->shouldReceive('setToken')
+                  ->once()
+                  ->with('foo.bar.baz')
+                  ->andReturnSelf();
+
         $token = $this->guard->login($user);
 
         $this->assertSame('foo.bar.baz', $token);
@@ -460,5 +485,18 @@ class JWTGuardTest extends AbstractTestCase
         $this->jwt->shouldReceive('getToken')->once()->andReturn('foo.bar.baz');
         $this->jwt->shouldReceive('getPayload')->once()->andReturn(Mockery::mock(Payload::class));
         $this->assertInstanceOf(Payload::class, $this->guard->payload());
+    }
+
+    /**
+     * @test
+     * @group laravel-5.2
+     */
+    public function it_should_be_macroable()
+    {
+        $this->guard->macro('foo', function () {
+            return 'bar';
+        });
+
+        $this->assertEquals('bar', $this->guard->foo());
     }
 }

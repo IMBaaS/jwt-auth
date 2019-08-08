@@ -22,7 +22,6 @@ use Tymon\JWTAuth\Claims\IssuedAt;
 use Tymon\JWTAuth\Claims\NotBefore;
 use Tymon\JWTAuth\Claims\Collection;
 use Tymon\JWTAuth\Claims\Expiration;
-use Tymon\JWTAuth\Test\Fixtures\Foo;
 use Tymon\JWTAuth\Validators\PayloadValidator;
 
 class PayloadTest extends AbstractTestCase
@@ -42,13 +41,6 @@ class PayloadTest extends AbstractTestCase
         parent::setUp();
 
         $this->payload = $this->getTestPayload();
-    }
-
-    public function tearDown()
-    {
-        Mockery::close();
-
-        parent::tearDown();
     }
 
     /**
@@ -133,7 +125,8 @@ class PayloadTest extends AbstractTestCase
     {
         $values = $this->payload->get(['sub', 'jti']);
 
-        list($sub, $jti) = $values;
+        $sub = $values[0];
+        $jti = $values[1];
 
         $this->assertInternalType('array', $values);
         $this->assertSame($sub, 1);
@@ -207,7 +200,6 @@ class PayloadTest extends AbstractTestCase
     public function it_should_count_the_claims()
     {
         $this->assertSame(6, $this->payload->count());
-        $this->assertSame(6, count($this->payload));
         $this->assertCount(6, $this->payload);
     }
 

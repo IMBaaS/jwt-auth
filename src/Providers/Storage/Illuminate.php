@@ -13,6 +13,7 @@ namespace Tymon\JWTAuth\Providers\Storage;
 
 use BadMethodCallException;
 use Tymon\JWTAuth\Contracts\Providers\Storage;
+use Psr\SimpleCache\CacheInterface as PsrCacheInterface;
 use Illuminate\Contracts\Cache\Repository as CacheContract;
 
 class Illuminate implements Storage
@@ -37,6 +38,11 @@ class Illuminate implements Storage
     protected $supportsTags;
 
     /**
+     * @var string|null
+     */
+    protected $laravelVersion;
+
+    /**
      * Constructor.
      *
      * @param  \Illuminate\Contracts\Cache\Repository  $cache
@@ -59,6 +65,14 @@ class Illuminate implements Storage
      */
     public function add($key, $value, $minutes)
     {
+        // If the laravel version is 5.8 or higher then convert minutes to seconds.
+        if ($this->laravelVersion !== null
+            && is_int($minutes)
+            && version_compare($this->laravelVersion, '5.8', '>=')
+        ) {
+            $minutes = $minutes * 60;
+        }
+
         $this->cache()->put($key, $value, $minutes);
     }
 
@@ -128,6 +142,16 @@ class Illuminate implements Storage
     }
 
     /**
+     * Set the laravel version.
+     */
+    public function setLaravelVersion($version)
+    {
+        $this->laravelVersion = $version;
+
+        return $this;
+    }
+
+    /**
      * Detect as best we can whether tags are supported with this repository & store,
      * and save our result on the $supportsTags flag.
      *
@@ -136,7 +160,7 @@ class Illuminate implements Storage
     protected function determineTagSupport()
     {
         // Laravel >= 5.1.28
-        if (method_exists($this->cache, 'tags')) {
+        if (method_exists($this->cache, 'tags') || $this->cache instanceof PsrCacheInterface) {
             try {
                 // Attempt the repository tags command, which throws exceptions when unsupported
                 $this->cache->tags($this->tag);

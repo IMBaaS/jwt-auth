@@ -44,6 +44,13 @@ class JWT
     protected $token;
 
     /**
+     * Lock the subject.
+     *
+     * @var bool
+     */
+    protected $lockSubject = true;
+
+    /**
      * JWT constructor.
      *
      * @param  \Tymon\JWTAuth\Manager  $manager
@@ -132,31 +139,33 @@ class JWT
     /**
      * Check that the token is valid.
      *
-     * @return bool
+     * @param  bool  $getPayload
+     *
+     * @return \Tymon\JWTAuth\Payload|bool
      */
-    public function check()
+    public function check($getPayload = false)
     {
         try {
-            $this->checkOrFail();
+            $payload = $this->checkOrFail();
         } catch (JWTException $e) {
             return false;
         }
 
-        return true;
+        return $getPayload ? $payload : true;
     }
 
     /**
      * Get the token.
      *
-     * @return \Tymon\JWTAuth\Token|false
+     * @return \Tymon\JWTAuth\Token|null
      */
     public function getToken()
     {
-        if (! $this->token) {
+        if ($this->token === null) {
             try {
                 $this->parseToken();
             } catch (JWTException $e) {
-                return false;
+                $this->token = null;
             }
         }
 
@@ -235,10 +244,52 @@ class JWT
     protected function getClaimsArray(JWTSubject $subject)
     {
         return array_merge(
-            ['sub' => $subject->getJWTIdentifier()],
-            $this->customClaims, // custom claims from inline setter
-            $subject->getJWTCustomClaims() // custom claims from JWTSubject method
+            $this->getClaimsForSubject($subject),
+            $subject->getJWTCustomClaims(), // custom claims from JWTSubject method
+            $this->customClaims // custom claims from inline setter
         );
+    }
+
+    /**
+     * Get the claims associated with a given subject.
+     *
+     * @param  \Tymon\JWTAuth\Contracts\JWTSubject  $subject
+     *
+     * @return array
+     */
+    protected function getClaimsForSubject(JWTSubject $subject)
+    {
+        return array_merge([
+            'sub' => $subject->getJWTIdentifier(),
+        ], $this->lockSubject ? ['prv' => $this->hashSubjectModel($subject)] : []);
+    }
+
+    /**
+     * Hash the subject model and return it.
+     *
+     * @param  string|object  $model
+     *
+     * @return string
+     */
+    protected function hashSubjectModel($model)
+    {
+        return sha1(is_object($model) ? get_class($model) : $model);
+    }
+
+    /**
+     * Check if the subject model matches the one saved in the token.
+     *
+     * @param  string|object  $model
+     *
+     * @return bool
+     */
+    public function checkSubjectModel($model)
+    {
+        if (($prv = $this->payload()->get('prv')) === null) {
+            return true;
+        }
+
+        return $this->hashSubjectModel($model) === $prv;
     }
 
     /**
@@ -291,6 +342,20 @@ class JWT
     public function setRequest(Request $request)
     {
         $this->parser->setRequest($request);
+
+        return $this;
+    }
+
+    /**
+     * Set whether the subject should be "locked".
+     *
+     * @param  bool  $lock
+     *
+     * @return $this
+     */
+    public function lockSubject($lock)
+    {
+        $this->lockSubject = $lock;
 
         return $this;
     }

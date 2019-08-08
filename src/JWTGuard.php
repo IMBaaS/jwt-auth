@@ -16,13 +16,16 @@ use Illuminate\Http\Request;
 use Illuminate\Auth\GuardHelpers;
 use Illuminate\Contracts\Auth\Guard;
 use Tymon\JWTAuth\Contracts\JWTSubject;
+use Illuminate\Support\Traits\Macroable;
 use Tymon\JWTAuth\Exceptions\JWTException;
 use Illuminate\Contracts\Auth\UserProvider;
 use Tymon\JWTAuth\Exceptions\UserNotDefinedException;
 
 class JWTGuard implements Guard
 {
-    use GuardHelpers;
+    use GuardHelpers, Macroable {
+        __call as macroCall;
+    }
 
     /**
      * The user we last attempted to retrieve.
@@ -72,10 +75,11 @@ class JWTGuard implements Guard
             return $this->user;
         }
 
-        if ($this->jwt->getToken() && $this->jwt->check()) {
-            $id = $this->jwt->payload()->get('sub');
-
-            return $this->user = $this->provider->retrieveById($id);
+        if ($this->jwt->setRequest($this->request)->getToken() &&
+            ($payload = $this->jwt->check(true)) &&
+            $this->validateSubject()
+        ) {
+            return $this->user = $this->provider->retrieveById($payload['sub']);
         }
     }
 
@@ -104,7 +108,7 @@ class JWTGuard implements Guard
      */
     public function validate(array $credentials = [])
     {
-        return $this->attempt($credentials, false);
+        return (bool) $this->attempt($credentials, false);
     }
 
     /**
@@ -135,9 +139,10 @@ class JWTGuard implements Guard
      */
     public function login(JWTSubject $user)
     {
-        $this->setUser($user);
+        $token = $this->jwt->fromUser($user);
+        $this->setToken($token)->setUser($user);
 
-        return $this->jwt->fromUser($user);
+        return $token;
     }
 
     /**
@@ -294,6 +299,8 @@ class JWTGuard implements Guard
      * Set the token ttl.
      *
      * @param  int  $ttl
+     *
+     * @return $this
      */
     public function setTTL($ttl)
     {
@@ -339,7 +346,7 @@ class JWTGuard implements Guard
     /**
      * Get the current request instance.
      *
-     * @return \Symfony\Component\HttpFoundation\Request
+     * @return \Illuminate\Http\Request
      */
     public function getRequest()
     {
@@ -384,6 +391,22 @@ class JWTGuard implements Guard
     }
 
     /**
+     * Ensure the JWTSubject matches what is in the token.
+     *
+     * @return  bool
+     */
+    protected function validateSubject()
+    {
+        // If the provider doesn't have the necessary method
+        // to get the underlying model name then allow.
+        if (! method_exists($this->provider, 'getModel')) {
+            return true;
+        }
+
+        return $this->jwt->checkSubjectModel($this->provider->getModel());
+    }
+
+    /**
      * Ensure that a token is available in the request.
      *
      * @throws \Tymon\JWTAuth\Exceptions\JWTException
@@ -413,6 +436,10 @@ class JWTGuard implements Guard
     {
         if (method_exists($this->jwt, $method)) {
             return call_user_func_array([$this->jwt, $method], $parameters);
+        }
+
+        if (static::hasMacro($method)) {
+            return $this->macroCall($method, $parameters);
         }
 
         throw new BadMethodCallException("Method [$method] does not exist.");

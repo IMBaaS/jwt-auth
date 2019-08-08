@@ -50,13 +50,6 @@ class BlacklistTest extends AbstractTestCase
         $this->validator = Mockery::mock(PayloadValidator::class);
     }
 
-    public function tearDown()
-    {
-        Mockery::close();
-
-        parent::tearDown();
-    }
-
     /** @test */
     public function it_should_add_a_valid_token_to_the_blacklist()
     {
@@ -75,8 +68,18 @@ class BlacklistTest extends AbstractTestCase
 
         $payload = new Payload($collection, $this->validator);
 
-        $this->storage->shouldReceive('add')->with('foo', ['valid_until' => $this->testNowTimestamp], 20161)->once();
-        $this->blacklist->add($payload);
+        $refreshTTL = 20161;
+
+        $this->storage->shouldReceive('get')
+            ->with('foo')
+            ->once()
+            ->andReturn([]);
+
+        $this->storage->shouldReceive('add')
+            ->with('foo', ['valid_until' => $this->testNowTimestamp], $refreshTTL + 1)
+            ->once();
+
+        $this->blacklist->setRefreshTTL($refreshTTL)->add($payload);
     }
 
     /** @test */
@@ -116,8 +119,49 @@ class BlacklistTest extends AbstractTestCase
 
         $payload = new Payload($collection, $this->validator, true);
 
-        $this->storage->shouldReceive('add')->with('foo', ['valid_until' => $this->testNowTimestamp], 20161)->once();
-        $this->assertTrue($this->blacklist->add($payload));
+        $refreshTTL = 20161;
+
+        $this->storage->shouldReceive('get')
+            ->with('foo')
+            ->once()
+            ->andReturn([]);
+
+        $this->storage->shouldReceive('add')
+            ->with('foo', ['valid_until' => $this->testNowTimestamp], $refreshTTL + 1)
+            ->once();
+
+        $this->assertTrue($this->blacklist->setRefreshTTL($refreshTTL)->add($payload));
+    }
+
+    /** @test */
+    public function it_should_return_true_early_when_adding_an_item_and_it_already_exists()
+    {
+        $claims = [
+            new Subject(1),
+            new Issuer('http://example.com'),
+            new Expiration($this->testNowTimestamp - 3600),
+            new NotBefore($this->testNowTimestamp),
+            new IssuedAt($this->testNowTimestamp),
+            new JwtId('foo'),
+        ];
+        $collection = Collection::make($claims);
+
+        $this->validator->shouldReceive('setRefreshFlow->check')->andReturn($collection);
+
+        $payload = new Payload($collection, $this->validator, true);
+
+        $refreshTTL = 20161;
+
+        $this->storage->shouldReceive('get')
+            ->with('foo')
+            ->once()
+            ->andReturn(['valid_until' => $this->testNowTimestamp]);
+
+        $this->storage->shouldReceive('add')
+            ->with('foo', ['valid_until' => $this->testNowTimestamp], $refreshTTL + 1)
+            ->never();
+
+        $this->assertTrue($this->blacklist->setRefreshTTL($refreshTTL)->add($payload));
     }
 
     /** @test */
@@ -141,6 +185,44 @@ class BlacklistTest extends AbstractTestCase
         $this->storage->shouldReceive('get')->with('foobar')->once()->andReturn(['valid_until' => $this->testNowTimestamp]);
 
         $this->assertTrue($this->blacklist->has($payload));
+    }
+
+    public function blacklist_provider()
+    {
+        return [
+            [null],
+            [0],
+            [''],
+            [[]],
+            [['valid_until' => strtotime('+1day')]],
+        ];
+    }
+
+    /**
+     * @test
+     * @dataProvider blacklist_provider
+     *
+     * @param mixed $result
+     */
+    public function it_should_check_whether_a_token_has_not_been_blacklisted($result)
+    {
+        $claims = [
+            new Subject(1),
+            new Issuer('http://example.com'),
+            new Expiration($this->testNowTimestamp + 3600),
+            new NotBefore($this->testNowTimestamp),
+            new IssuedAt($this->testNowTimestamp),
+            new JwtId('foobar'),
+        ];
+
+        $collection = Collection::make($claims);
+
+        $this->validator->shouldReceive('setRefreshFlow->check')->andReturn($collection);
+
+        $payload = new Payload($collection, $this->validator);
+
+        $this->storage->shouldReceive('get')->with('foobar')->once()->andReturn($result);
+        $this->assertFalse($this->blacklist->has($payload));
     }
 
     /** @test */
